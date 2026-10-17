@@ -27,19 +27,39 @@ async function evaluatePR({ github, owner, repo, prNumber, dryRun = false }) {
   const headSha = pr.head.sha;
   const isTargetDev = pr.base.ref === "dev";
 
-  // 2. Check mergeability & conflicts
+  // If GitHub has not computed mergeability yet (mergeable is null), wait briefly and re-fetch
+  if (pr.mergeable === null) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const refetched = await github.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: prNumber,
+      });
+      pr = refetched.data;
+    } catch {
+      // Ignore retry failure and proceed with initial pr object
+    }
+  }
+
+  // 2. Check mergeability & conflicts strictly
+  let hasConflicts = false;
   let mergeableClean = false;
-  let conflictDetails = "";
-  if (pr.mergeable === false || pr.mergeable_state === "dirty") {
+  let conflictDetails = '';
+
+  if (pr.mergeable === false || pr.mergeable_state === 'dirty') {
+    hasConflicts = true;
     mergeableClean = false;
-    conflictDetails = "Merge conflicts detected with `dev`. Branch needs rebase.";
+    conflictDetails = 'Merge conflicts detected with `dev`. Branch needs conflict resolution.';
   } else if (pr.mergeable === true) {
+    hasConflicts = false;
     mergeableClean = true;
     conflictDetails = "No merge conflicts.";
   } else {
-    // Null means GitHub is calculating mergeability in background
+    // Null: GitHub background calculation is still pending. Do not falsely claim conflicts.
+    hasConflicts = false;
     mergeableClean = false;
-    conflictDetails = "Mergeability is being computed by GitHub. Will re-check on next pass.";
+    conflictDetails = 'Mergeability is being computed by GitHub. Will re-verify on next check.';
   }
 
   // 3. Evaluate CI Checks
@@ -202,10 +222,8 @@ async function evaluatePR({ github, owner, repo, prNumber, dryRun = false }) {
       `**Change base branch to \`dev\`**: This PR currently targets \`${pr.base.ref}\`. All pull requests must target the \`dev\` branch.`,
     );
   }
-  if (!mergeableClean) {
-    actionItems.push(
-      `**Rebase onto \`dev\` and resolve conflicts**: Run \`git fetch origin dev && git rebase origin/dev\`, resolve conflict markers, and force push.`,
-    );
+  if (hasConflicts) {
+    actionItems.push(`**Resolve merge conflicts with \`dev\`**: This branch has conflicting files with \`dev\`. Run \`git fetch origin dev && git rebase origin/dev\`, resolve the conflict markers, and push.`);
   }
   if (failingChecks.length > 0) {
     actionItems.push(
@@ -272,10 +290,10 @@ Thank you for your contribution to **StormSale**! 🎉`;
 
 | Gate | Status | Details |
 | :--- | :---: | :--- |
-| **Target Branch (\`dev\`)** | ${isTargetDev ? "✅ Passed" : "❌ Failed"} | ${isTargetDev ? "Targets `dev`" : `Targets \`${pr.base.ref}\` (must target \`dev\`)`} |
-| **Merge Conflicts** | ${mergeableClean ? "✅ Clean" : "❌ Conflicts"} | ${conflictDetails} |
-| **CI & Test Audit** | ${ciPassed ? "✅ Passed" : ciRunning ? "⏳ Running" : "❌ Failed"} | ${ciPassed ? "All required checks passing" : failingChecks.length ? `Failing: ${failingChecks.join(", ")}` : "In progress"} |
-| **CodeRabbit Review** | ${codeRabbitClean ? "✅ Clean" : codeRabbitStatus === "Awaiting Review" ? "⏳ Awaiting" : "⚠️ Action Needed"} | ${codeRabbitDetails} |
+| **Target Branch (\`dev\`)** | ${isTargetDev ? '✅ Passed' : '❌ Failed'} | ${isTargetDev ? 'Targets `dev`' : `Targets \`${pr.base.ref}\` (must target \`dev\`)`} |
+| **Merge Conflicts** | ${hasConflicts ? '❌ Conflicts' : (mergeableClean ? '✅ Clean' : '⏳ Checking')} | ${conflictDetails} |
+| **CI & Test Audit** | ${ciPassed ? '✅ Passed' : (ciRunning ? '⏳ Running' : '❌ Failed')} | ${ciPassed ? 'All required checks passing' : (failingChecks.length ? `Failing: ${failingChecks.join(', ')}` : 'In progress')} |
+| **CodeRabbit Review** | ${codeRabbitClean ? '✅ Clean' : (codeRabbitStatus === 'Awaiting Review' ? '⏳ Awaiting' : '⚠️ Action Needed')} | ${codeRabbitDetails} |
 
 <details>
 <summary>🔍 <b>Detailed Check Breakdown</b></summary>
@@ -335,15 +353,15 @@ async function run({ github, context, core, specificPrNumber = null, dryRun = fa
   } else if (context.payload.pull_request) {
     prNumbers = [context.payload.pull_request.number];
   } else {
-    // Sweep open PRs targeting dev
-    const { data: openPRs } = await github.rest.pulls.list({
+    // Sweep all open PRs across all pages
+    const openPRs = await github.paginate(github.rest.pulls.list, {
       owner,
       repo,
-      state: "open",
-      base: "dev",
-      per_page: 50,
+      state: 'open',
+      per_page: 100,
     });
-    prNumbers = openPRs.map((pr) => pr.number);
+    // Sort ascending by number so earlier PRs are processed in sequence
+    prNumbers = openPRs.map((pr) => pr.number).sort((a, b) => a - b);
   }
 
   core.info(`Merge Keeper evaluating ${prNumbers.length} PR(s): ${prNumbers.join(", ")}`);
@@ -354,6 +372,8 @@ async function run({ github, context, core, specificPrNumber = null, dryRun = fa
       core.info(`Evaluating PR #${num}...`);
       const res = await evaluatePR({ github, owner, repo, prNumber: num, dryRun });
       results.push(res);
+      // Pacing delay to avoid burst secondary rate limits across 70+ PRs
+      await new Promise((r) => setTimeout(r, 350));
     } catch (err) {
       core.error(`Error processing PR #${num}: ${err.message}`);
     }
