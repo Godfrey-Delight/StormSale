@@ -32,5 +32,12 @@ export default tseslint.config(
       ],
     },
   },
-  eslintConfigPrettier,
+  {
+    files: ["scripts/**/*.{js,mjs}"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.node,
+    },
+  },
+  eslintConfigPrettier
 );
