@@ -33,11 +33,14 @@ export default tseslint.config(
     },
   },
   {
-    files: ["scripts/**/*.{js,mjs}"],
+    files: ["scripts/**/*.{js,mjs,cjs}"],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
     },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
   },
-  eslintConfigPrettier
+  eslintConfigPrettier,
 );

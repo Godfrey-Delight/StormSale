@@ -22,6 +22,13 @@ import { Input } from "../../components/ui/input";
 import { useWeb3 } from "../../hooks/useWeb3";
 import { useNotification } from "../../context/NotificationContext";
 import { formatStellarAddress } from "../../lib/stellar";
+import type { MultiSigRefundProposal } from "../../lib/multiSigSafe";
+import {
+  isLargeRefund,
+  getLatestProposalForCampaign,
+  initiateMultiSigRefund,
+} from "../../lib/multiSigSafe";
+import { MultiSigRefundModal } from "./MultiSigRefundModal";
 
 export type CampaignStatus = "Active" | "Paused" | "Completed";
 
@@ -120,6 +127,22 @@ export const initialMockCampaigns: Campaign[] = [
     escrowBalance: 0,
     isRefunded: true, // Already refunded
   },
+  {
+    id: "6",
+    name: "Enterprise Soroban Summit",
+    status: "Completed",
+    commissionRate: 10,
+    clearingPeriod: "14 Days",
+    totalSales: 320,
+    totalRevenue: "$160,000",
+    totalCommissions: "$16,000",
+    affiliates: 24,
+    createdAt: "2026-01-15",
+    contractAddress: "CF8R...4321",
+    escrowInitial: 30000,
+    escrowBalance: 18500, // Ended campaign with 18,500 XLM unused escrow (> $10k Threshold)
+    isRefunded: false,
+  },
 ];
 
 const statusConfig: Record<CampaignStatus, { badge: string; dot: string }> = {
@@ -142,6 +165,10 @@ export const MyCampaignsList = () => {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "All" | "LowEscrow">("All");
   const [refundingCampaignId, setRefundingCampaignId] = useState<string | null>(null);
+  const [activeMultiSigProposal, setActiveMultiSigProposal] =
+    useState<MultiSigRefundProposal | null>(null);
+  const [isMultiSigModalOpen, setIsMultiSigModalOpen] = useState(false);
+  const [, setMultiSigVersion] = useState(0);
 
   const { refundCampaignEscrow, isConnected, userAddress } = useWeb3();
   const { showNotification } = useNotification();
@@ -180,6 +207,31 @@ export const MyCampaignsList = () => {
       return;
     }
 
+    // Issue #104: Escrow reclamations >= $10,000 require Gnosis Safe / Stellar secondary signature
+    if (isLargeRefund(campaign.escrowBalance)) {
+      let proposal = getLatestProposalForCampaign(campaign.id);
+      if (!proposal) {
+        proposal = initiateMultiSigRefund(
+          {
+            id: campaign.id,
+            name: campaign.name,
+            escrowBalance: campaign.escrowBalance,
+            contractAddress: campaign.contractAddress,
+          },
+          userAddress || "G_PRIMARY_ADVERTISER_WAL_99XX",
+        );
+        setMultiSigVersion((v) => v + 1);
+      }
+      setActiveMultiSigProposal(proposal);
+      setIsMultiSigModalOpen(true);
+      showNotification({
+        type: "info",
+        title: "Multi-Sig Authorization Required",
+        message: `Escrow refund exceeds $10,000 policy threshold (${campaign.escrowBalance.toLocaleString()} XLM). Secondary Safe approval required.`,
+      });
+      return;
+    }
+
     setRefundingCampaignId(campaign.id);
     const refundAmount = campaign.escrowBalance;
 
@@ -204,12 +256,13 @@ export const MyCampaignsList = () => {
           userAddress ? formatStellarAddress(userAddress) : "your wallet"
         }. Tx: ${result.txHash ? result.txHash.slice(0, 10) + "..." : "Confirmed"}`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error refunding escrow:", error);
+      const message = error instanceof Error ? error.message : "Failed to refund campaign escrow";
       showNotification({
         type: "error",
         title: "Refund Failed",
-        message: error.message || "Failed to refund campaign escrow",
+        message,
       });
     } finally {
       setRefundingCampaignId(null);
@@ -466,6 +519,16 @@ export const MyCampaignsList = () => {
                           Low Escrow (&lt; 10%)
                         </span>
                       )}
+
+                      {/* Issue #104: Multi-Sig Escrow Policy Badge */}
+                      {campaign.status === "Completed" &&
+                        isLargeRefund(campaign.escrowBalance) &&
+                        !campaign.isRefunded && (
+                          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800">
+                            <Shield className="w-3 h-3" />
+                            Multi-Sig Required (&gt;$10k)
+                          </span>
+                        )}
                     </div>
                   </div>
                 </CardHeader>
@@ -578,6 +641,53 @@ export const MyCampaignsList = () => {
                               Settled)
                             </span>
                           </div>
+                        ) : isLargeRefund(campaign.escrowBalance) ? (
+                          (() => {
+                            const proposal = getLatestProposalForCampaign(campaign.id);
+                            if (proposal && proposal.status === "approved") {
+                              return (
+                                <Button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMultiSigProposal(proposal);
+                                    setIsMultiSigModalOpen(true);
+                                  }}
+                                  className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
+                                >
+                                  <CheckCircle2 className="w-4 h-4" />
+                                  <span>Release Multi-Sig Escrow (Approved · 2/2)</span>
+                                </Button>
+                              );
+                            }
+                            if (proposal && proposal.status === "pending_secondary") {
+                              return (
+                                <Button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMultiSigProposal(proposal);
+                                    setIsMultiSigModalOpen(true);
+                                  }}
+                                  className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
+                                >
+                                  <Shield className="w-4 h-4" />
+                                  <span>
+                                    Track Multi-Sig Approval (
+                                    {campaign.escrowBalance.toLocaleString()} XLM · 1/2)
+                                  </span>
+                                </Button>
+                              );
+                            }
+                            return (
+                              <Button
+                                type="button"
+                                onClick={() => handleRefund(campaign)}
+                                className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
+                              >
+                                <Shield className="w-4 h-4" />
+                                <span>Refund Unused Escrow (&gt; $10k Multi-Sig)</span>
+                              </Button>
+                            );
+                          })()
                         ) : (
                           <Button
                             type="button"
@@ -660,6 +770,25 @@ export const MyCampaignsList = () => {
           })}
         </div>
       )}
+
+      {/* Issue #104: Multi-Sig Refund Modal */}
+      <MultiSigRefundModal
+        isOpen={isMultiSigModalOpen}
+        onClose={() => setIsMultiSigModalOpen(false)}
+        proposal={activeMultiSigProposal}
+        onProposalUpdated={(updated) => {
+          setActiveMultiSigProposal(updated);
+          setMultiSigVersion((v) => v + 1);
+        }}
+        onRefundExecuted={(campaignId) => {
+          setCampaigns((prev) =>
+            prev.map((c) =>
+              c.id === campaignId ? { ...c, escrowBalance: 0, isRefunded: true } : c,
+            ),
+          );
+          setMultiSigVersion((v) => v + 1);
+        }}
+      />
     </div>
   );
 };
