@@ -32,3 +32,4 @@ generate_commits.sh
 *.njsproj
 *.sln
 *.sw?
+lens/
