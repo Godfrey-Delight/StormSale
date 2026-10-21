@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const DEFAULT_THRESHOLD = 80;
 
@@ -52,9 +52,53 @@ function getChangedFiles() {
   }
 }
 
+function getChangedLines(baseSha) {
+  const diff = execFileSync(
+    'git',
+    ['diff', '--unified=0', `${baseSha}...HEAD`, '--', '*.ts', '*.tsx'],
+    { encoding: 'utf8' },
+  );
+  const changedLines = {};
+  let file = null;
+  let lineNumber = 0;
+
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith('+++ b/')) {
+      file = line.slice(6).replace(/\\/g, '/');
+      continue;
+    }
+
+    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) {
+      lineNumber = Number(hunk[1]);
+      continue;
+    }
+
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      if (
+        file &&
+        file.startsWith('src/') &&
+        !file.includes('.test.') &&
+        !file.includes('.spec.') &&
+        !file.startsWith('src/tests/')
+      ) {
+        changedLines[file] ??= [];
+        changedLines[file].push(lineNumber);
+      }
+      lineNumber += 1;
+    } else if (line.startsWith(' ') && !line.startsWith('---')) {
+      lineNumber += 1;
+    }
+  }
+
+  return changedLines;
+}
+
 function evaluateCoverage(summaryData, options = {}) {
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
   const targetFiles = options.targetFiles || [];
+  const changedLines = options.changedLines;
+  const detailedCoverage = options.detailedCoverage || {};
   const rootDir = process.cwd();
 
   const entries = Object.entries(summaryData);
@@ -103,8 +147,38 @@ function evaluateCoverage(summaryData, options = {}) {
 
     fileMetrics.push(metric);
 
-    // If targeted files specified or checked
-    if (targetFiles.length > 0) {
+    if (changedLines) {
+      const additions = changedLines[relativePath];
+      if (!additions?.length) continue;
+
+      const resolvedPath = path.resolve(rootDir, relativePath);
+      const coverageEntry = Object.entries(detailedCoverage).find(
+        ([filePath]) => path.resolve(filePath) === resolvedPath,
+      )?.[1];
+
+      if (!coverageEntry) {
+        metric.changedLines = additions.length;
+        metric.coveredChangedLines = 0;
+        metric.changedLinesPct = 0;
+      } else {
+        const lineHits = new Map();
+        for (const [statementId, statement] of Object.entries(coverageEntry.statementMap)) {
+          const line = statement.start.line;
+          lineHits.set(line, Math.max(lineHits.get(line) ?? 0, coverageEntry.s[statementId]));
+        }
+
+        const executableLines = [...new Set(additions)].filter((line) => lineHits.has(line));
+        if (executableLines.length === 0) continue;
+
+        const coveredLines = executableLines.filter((line) => lineHits.get(line) > 0);
+        metric.changedLines = executableLines.length;
+        metric.coveredChangedLines = coveredLines.length;
+        metric.changedLinesPct = (coveredLines.length / executableLines.length) * 100;
+      }
+
+      metric.meetsThreshold = metric.changedLinesPct >= threshold;
+      if (!metric.meetsThreshold) violations.push(metric);
+    } else if (targetFiles.length > 0) {
       if (targetFiles.some((tf) => relativePath.includes(tf)) && !meetsThreshold) {
         violations.push(metric);
       }
@@ -136,12 +210,25 @@ function generateMarkdownReport(evaluation) {
     md += `| **Overall Codebase** | ${total.statements.pct}% | ${total.branches.pct}% | ${total.functions.pct}% | **${total.lines.pct}%** | ${statusIcon} |\n\n`;
   }
 
-  md += `#### 📋 File-by-File Coverage Metrics\n\n`;
+  const changedLineMetrics = fileMetrics.filter((metric) => metric.changedLines !== undefined);
+  if (changedLineMetrics.length > 0) {
+    md += `#### 🧭 Changed-Line Coverage\n\n`;
+    md += `| File | Covered executable changed lines | Status |\n`;
+    md += `| :--- | :---: | :---: |\n`;
+    for (const metric of changedLineMetrics) {
+      const icon = metric.meetsThreshold ? '✅' : '❌';
+      md += `| \`${metric.file}\` | ${metric.coveredChangedLines}/${metric.changedLines} (${metric.changedLinesPct.toFixed(2)}%) | ${icon} |\n`;
+    }
+  }
+
+  md += changedLineMetrics.length > 0
+    ? `#### 📋 Full-File Coverage Metrics (informational; the gate applies to changed executable lines)\n\n`
+    : `#### 📋 File-by-File Coverage Metrics\n\n`;
   md += `| File | Statements | Branches | Functions | Lines | Status |\n`;
   md += `| :--- | :---: | :---: | :---: | :---: | :---: |\n`;
 
   for (const m of fileMetrics) {
-    const icon = m.lines >= threshold ? '✅' : '❌';
+    const icon = changedLineMetrics.length > 0 ? 'ℹ️' : m.lines >= threshold ? '✅' : '❌';
     md += `| \`${m.file}\` | ${m.statements}% | ${m.branches}% | ${m.functions}% | **${m.lines}%** | ${icon} |\n`;
   }
 
@@ -149,7 +236,10 @@ function generateMarkdownReport(evaluation) {
     md += `\n> [!CAUTION]\n`;
     md += `> **Coverage Threshold Failure**: ${violations.length} target file(s) dropped below the required ${threshold}% threshold:\n`;
     for (const v of violations) {
-      md += `> - \`${v.file}\`: ${v.lines}% lines (required >= ${threshold}%)\n`;
+      const coverage = v.changedLinesPct === undefined
+        ? `${v.lines}% lines`
+        : `${v.coveredChangedLines}/${v.changedLines} changed lines (${v.changedLinesPct.toFixed(2)}%)`;
+      md += `> - \`${v.file}\`: ${coverage} (required >= ${threshold}%)\n`;
     }
   }
 
@@ -208,4 +298,5 @@ if (require.main === module) {
 module.exports = {
   evaluateCoverage,
   generateMarkdownReport,
+  getChangedLines,
 };

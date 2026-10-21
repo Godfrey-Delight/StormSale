@@ -85,6 +85,59 @@ describe("Enforced Coverage Thresholds (#95)", () => {
     expect(evaluation.violations).toHaveLength(0);
   });
 
+  it("enforces coverage on changed executable lines without penalizing uncovered unchanged code", () => {
+    const filePath = path.resolve(process.cwd(), "src/lib/storage.ts");
+    const detailedCoverage = {
+      [filePath]: {
+        statementMap: {
+          0: { start: { line: 10 } },
+          1: { start: { line: 11 } },
+          2: { start: { line: 12 } },
+          3: { start: { line: 30 } },
+        },
+        s: { 0: 1, 1: 1, 2: 0, 3: 0 },
+      },
+    };
+
+    const evaluation = evaluateCoverage(mockCoverageSummary, {
+      threshold: 80,
+      changedLines: { "src/lib/storage.ts": [10, 11] },
+      detailedCoverage,
+    });
+
+    expect(evaluation.violations).toHaveLength(0);
+    expect(
+      evaluation.fileMetrics.find((metric: FileMetric) => metric.file.includes("storage.ts")),
+    ).toMatchObject({
+      changedLines: 2,
+      coveredChangedLines: 2,
+      changedLinesPct: 100,
+      meetsThreshold: true,
+    });
+  });
+
+  it("reports uncovered changed executable lines below the threshold", () => {
+    const filePath = path.resolve(process.cwd(), "src/lib/storage.ts");
+    const evaluation = evaluateCoverage(mockCoverageSummary, {
+      threshold: 80,
+      changedLines: { "src/lib/storage.ts": [10, 11, 12] },
+      detailedCoverage: {
+        [filePath]: {
+          statementMap: {
+            0: { start: { line: 10 } },
+            1: { start: { line: 11 } },
+            2: { start: { line: 12 } },
+          },
+          s: { 0: 1, 1: 1, 2: 0 },
+        },
+      },
+    });
+
+    expect(evaluation.violations).toHaveLength(1);
+    expect(evaluation.violations[0].changedLinesPct).toBeCloseTo(66.67, 2);
+    expect(generateMarkdownReport(evaluation)).toContain("2/3 changed lines (66.67%)");
+  });
+
   it("generates markdown audit report with file-by-file metrics and status indicators", () => {
     const evaluation = evaluateCoverage(mockCoverageSummary, {
       threshold: 80,
