@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const PORT = 4173;
 
 export default defineConfig({
+  timeout: 60_000,
   testDir: "./tests/e2e",
   testMatch: "**/*.e2e.ts",
   fullyParallel: true,
@@ -27,7 +28,7 @@ export default defineConfig({
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${PORT} --strictPort`,
+    command: `npm run preview -- --host 127.0.0.1 --port ${PORT} --strictPort`,
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

@@ -320,7 +320,7 @@ export const CreateCampaignForm = () => {
             </div>
             <div>
               <CardTitle className="text-2xl font-bold text-zinc-900 dark:text-white">
-                Campaign Details & Escrow Funding
+                Create Campaign & Escrow Funding
               </CardTitle>
               <CardDescription className="text-zinc-500 dark:text-zinc-400 mt-1">
                 Configure affiliate rates, budget allowance, and on-chain escrow

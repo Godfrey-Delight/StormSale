@@ -2,49 +2,50 @@ name: Frontend CI & Test Audit
 
 on:
   push:
-    branches: ["main", "dev"]
+    branches: [ "main", "dev" ]
   pull_request:
     types: [opened, synchronize, reopened]
     branches: ["main", "dev"]
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+    - name: Checkout Code
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: "npm"
-          cache-dependency-path: package-lock.json
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 22
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
 
-      - name: Install Dependencies
-        run: npm ci
+    - name: Install Dependencies
+      run: npm ci
 
-      - name: Run Unit Tests & Coverage Audit Export
-        run: npx vitest run --coverage --reporter=default --reporter=json --outputFile=test-results.json
-        continue-on-error: true
+    - name: Run Unit Tests & Coverage Audit Export
+      run: |
+        npx vitest run --coverage --reporter=default --reporter=json --outputFile=test-results.json
+      continue-on-error: true
 
-      - name: Publish Test Audit & Enforced Coverage Summary
-        if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const { evaluateCoverage, generateMarkdownReport, getChangedLines } =
-              require(path.resolve('scripts/check-coverage.cjs'));
+    - name: Publish Test Audit & Enforced Coverage Summary
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { evaluateCoverage, generateMarkdownReport } = require(path.resolve('scripts/check-coverage.cjs'));
 
+          let summary = "### 🧪 Unit Test Execution Audit\n\n";
+          try {
             if (!fs.existsSync('test-results.json')) {
               core.setFailed('Test results file not found.');
               return;
