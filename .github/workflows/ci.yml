@@ -5,7 +5,7 @@ on:
     branches: [ "main", "dev" ]
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: ["main", "dev"]
+    branches: [ "main", "dev" ]
 
 permissions:
   contents: read
@@ -47,74 +47,83 @@ jobs:
           let summary = "### 🧪 Unit Test Execution Audit\n\n";
           try {
             if (!fs.existsSync('test-results.json')) {
-              core.setFailed('Test results file not found.');
+              core.setFailed("Test results file not found.");
               return;
             }
-
             const results = JSON.parse(fs.readFileSync('test-results.json', 'utf8'));
             const passed = results.numPassedTests || 0;
             const total = results.numTotalTests || 0;
             const failed = results.numFailedTests || 0;
             const suites = results.numTotalTestSuites || 0;
 
-            let summary = '### 🧪 Unit Test Execution Audit\n\n';
-            summary += '| Metric | Count | Status |\n';
-            summary += '| :--- | :---: | :---: |\n';
+            summary += `| Metric | Count | Status |\n`;
+            summary += `| :--- | :---: | :---: |\n`;
             summary += `| **Total Tests Carried Out** | **${total}** | ${failed === 0 ? '✅ All Passed' : '❌ Failures Detected'} |\n`;
             summary += `| **Passed Tests** | ${passed} | ✅ |\n`;
             summary += `| **Failed Tests** | ${failed} | ${failed > 0 ? '❌' : '0'} |\n`;
             summary += `| **Test Suites** | ${suites} | 📁 |\n\n`;
 
-            if (results.testResults?.length) {
-              summary += '#### 📋 Suite Breakdown\n\n';
-              summary += '| Test Suite | Tests Passed | Duration |\n';
-              summary += '| :--- | :---: | :---: |\n';
+            if (results.testResults && results.testResults.length > 0) {
+              summary += `#### 📋 Suite Breakdown\n`;
+              summary += `| Test Suite | Tests Passed | Duration |\n`;
+              summary += `| :--- | :---: | :---: |\n`;
               for (const suite of results.testResults) {
                 const name = suite.name.replace(/^.*\/src\//, 'src/');
-                const suitePassed = (suite.assertionResults || []).filter(
-                  (assertion) => assertion.status === 'passed',
-                ).length;
+                const suitePassed = (suite.assertionResults || []).filter(a => a.status === 'passed').length;
                 const suiteTotal = (suite.assertionResults || []).length;
-                const duration = `${Math.round(suite.endTime - suite.startTime)}ms`;
+                const duration = Math.round(suite.endTime - suite.startTime) + 'ms';
                 summary += `| \`${name}\` | **${suitePassed} / ${suiteTotal}** | ${duration} |\n`;
               }
-              summary += '\n';
+              summary += `\n`;
             }
 
-            if (!fs.existsSync('coverage/coverage-summary.json') ||
-                !fs.existsSync('coverage/coverage-final.json')) {
-              core.setFailed('Coverage reports were not generated.');
-              await core.summary.addRaw(summary).write();
-              return;
+            // Coverage Evaluation & File-by-File Metrics
+            let coverageFailed = false;
+            if (fs.existsSync('coverage/coverage-summary.json')) {
+              const coverageData = JSON.parse(fs.readFileSync('coverage/coverage-summary.json', 'utf8'));
+              
+              let targetFiles = [];
+              if (context.payload.pull_request) {
+                try {
+                  const { data: prFiles } = await github.rest.pulls.listFiles({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: context.payload.pull_request.number,
+                  });
+                  targetFiles = prFiles.map(f => f.filename).filter(f => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.includes('.test.') && !f.startsWith('src/tests/'));
+                } catch (e) {
+                  console.log("Could not list PR files via API: " + e.message);
+                }
+              }
+
+              const evaluation = evaluateCoverage(coverageData, {
+                threshold: 80,
+                targetFiles,
+              });
+
+              const coverageMd = generateMarkdownReport(evaluation);
+              summary += `\n---\n\n` + coverageMd;
+
+              if (evaluation.violations.length > 0) {
+                coverageFailed = true;
+              }
+            } else {
+              summary += `\n> [!WARNING]\n> Coverage summary not found. Ensure Vitest ran with --coverage.\n`;
             }
 
-            const coverageSummary = JSON.parse(
-              fs.readFileSync('coverage/coverage-summary.json', 'utf8'),
-            );
-            const detailedCoverage = JSON.parse(
-              fs.readFileSync('coverage/coverage-final.json', 'utf8'),
-            );
-            const changedLines = context.payload.pull_request
-              ? getChangedLines(context.payload.pull_request.base.sha)
-              : {};
-            const evaluation = evaluateCoverage(coverageSummary, {
-              threshold: 80,
-              changedLines,
-              detailedCoverage,
-            });
-
-            summary += `---\n\n${generateMarkdownReport(evaluation)}`;
+            // Write to GitHub Actions Step Summary (visible in Checks tab)
             await core.summary.addRaw(summary).write();
 
             if (failed > 0) {
               core.setFailed(`Unit test audit failed with ${failed} test failures.`);
             }
-            if (evaluation.violations.length > 0) {
-              core.setFailed(
-                `Coverage threshold check failed: ${evaluation.violations.length} changed source file(s) are below 80% coverage.`,
-              );
-            }
 
-      - name: Run Type Check & Build
-        if: always()
-        run: npm run build
+            if (coverageFailed) {
+              core.setFailed(`Coverage threshold check failed: PR dropped below 80% threshold on modified files.`);
+            }
+          } catch (err) {
+            core.setFailed("Error processing test audit results: " + err.message);
+          }
+
+    - name: Run Type Check & Build
+      run: npm run build

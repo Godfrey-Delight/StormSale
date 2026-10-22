@@ -6,6 +6,10 @@ export interface SliderProps extends React.ComponentPropsWithoutRef<typeof Slide
   ariaLabel?: string;
 }
 
+/**
+ * Slider component built on Radix UI Slider primitive.
+ * Supports accessible keyboard controls, ARIA labeling, and responsive touch gestures.
+ */
 const Slider = React.forwardRef<React.ElementRef<typeof SliderPrimitive.Root>, SliderProps>(
   ({ className, ariaLabel, ...props }, ref) => (
     <SliderPrimitive.Root

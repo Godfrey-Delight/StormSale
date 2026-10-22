@@ -33,9 +33,11 @@ describe("IncomeProjectionTool", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Display currency in Stellar Lumens" }));
     expect(screen.getByText("XLM", { selector: "button" })).toBeTruthy();
+    expect(screen.getAllByText(/XLM/).length).toBeGreaterThan(1);
 
     fireEvent.click(screen.getByRole("button", { name: /Social Micro-Influencer/ }));
     expect(screen.getByRole("button", { name: "Reset sliders to default values" })).toBeTruthy();
+    expect(clicksSlider.getAttribute("aria-valuenow")).toBe("2500");
 
     fireEvent.click(screen.getByRole("button", { name: "Reset sliders to default values" }));
     expect(clicksSlider.getAttribute("aria-valuenow")).toBe("5000");
@@ -45,12 +47,14 @@ describe("IncomeProjectionTool", () => {
     const { container } = render(<IncomeProjectionTool />);
 
     fireEvent.click(screen.getByRole("button", { name: /Sensitivity Tiers/ }));
-    expect(screen.getByText(/Tier Breakdown:/)).toBeTruthy();
+    expect(screen.getByText(/Target Baseline \(100%\) Tier Breakdown:/)).toBeTruthy();
 
     const chartPoints = container.querySelectorAll("svg g.cursor-pointer");
     expect(chartPoints.length).toBeGreaterThan(0);
     fireEvent.mouseEnter(chartPoints[0]);
+    expect(screen.getByText(/Conservative \(50%\) Tier Breakdown:/)).toBeTruthy();
     fireEvent.mouseLeave(chartPoints[0]);
+    expect(screen.getByText(/Target Baseline \(100%\) Tier Breakdown:/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /6-Month Growth/ }));
     expect(screen.getByText("M1")).toBeTruthy();

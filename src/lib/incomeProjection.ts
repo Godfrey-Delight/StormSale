@@ -169,14 +169,29 @@ export const PROJECTION_PRESETS: PresetProfile[] = [
   },
 ];
 
+/**
+ * Rounds a number to two decimal places with float epsilon correction.
+ * @param num - The number to round.
+ * @returns The rounded number to 2 decimal places.
+ */
 function round2(num: number): number {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Rounds a number to one decimal place with float epsilon correction.
+ * @param num - The number to round.
+ * @returns The rounded number to 1 decimal place.
+ */
 function round1(num: number): number {
   return Math.round((num + Number.EPSILON) * 10) / 10;
 }
 
+/**
+ * Rounds a number to three decimal places with float epsilon correction.
+ * @param num - The number to round.
+ * @returns The rounded number to 3 decimal places.
+ */
 function round3(num: number): number {
   return Math.round((num + Number.EPSILON) * 1000) / 1000;
 }
@@ -300,7 +315,11 @@ export function calculateIncomeProjection(params: IncomeProjectionParams): Incom
 }
 
 /**
- * Currency and numeral presentation helpers.
+ * Formats a numeric value into a localized currency string (USD or XLM).
+ * @param amount - The numeric amount to format.
+ * @param currency - The currency unit ('USD' or 'XLM'). Defaults to 'USD'.
+ * @param decimals - The number of fraction digits. Defaults to 2.
+ * @returns The formatted currency string.
  */
 export function formatCurrency(
   amount: number,
@@ -321,6 +340,11 @@ export function formatCurrency(
   }).format(amount);
 }
 
+/**
+ * Formats a large number into a compact, human-readable abbreviation (e.g. 1.5k, 2.0M).
+ * @param value - The numerical value to format.
+ * @returns The abbreviated string representation.
+ */
 export function formatCompactNumber(value: number): string {
   if (value >= 1_000_000) {
     return `${(value / 1_000_000).toFixed(1)}M`;

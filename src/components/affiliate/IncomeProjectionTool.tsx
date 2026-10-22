@@ -31,6 +31,11 @@ import {
   type IncomeProjectionParams,
 } from "../../lib/incomeProjection";
 
+/**
+ * Interactive Affiliate Income & ROI Projection Tool.
+ * Provides real-time sliders for referral traffic, conversion rates, order values, commissions,
+ * and advertising costs with live ROI charts, preset strategy selection, and currency toggling.
+ */
 export const IncomeProjectionTool: React.FC = () => {
   const [params, setParams] = useState<Required<IncomeProjectionParams>>({
     monthlyClicks: SLIDER_CONFIGS.monthlyClicks.defaultValue,
@@ -49,6 +54,10 @@ export const IncomeProjectionTool: React.FC = () => {
   // Live calculated projection result
   const projection = useMemo(() => calculateIncomeProjection(params), [params]);
 
+  /**
+   * Updates a specific projection parameter value from slider inputs.
+   * Clears the currently selected preset badge if modified.
+   */
   const handleSliderChange = (key: keyof IncomeProjectionParams, value: number) => {
     setActivePresetId(null);
     setParams((prev) => ({
@@ -57,6 +66,9 @@ export const IncomeProjectionTool: React.FC = () => {
     }));
   };
 
+  /**
+   * Applies predefined slider configurations for specific affiliate profiles.
+   */
   const handleApplyPreset = (presetId: string) => {
     const preset = PROJECTION_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
@@ -64,6 +76,9 @@ export const IncomeProjectionTool: React.FC = () => {
     setParams({ ...preset.params });
   };
 
+  /**
+   * Resets all interactive sliders back to their baseline default configurations.
+   */
   const handleResetDefaults = () => {
     setActivePresetId(null);
     setParams({
@@ -75,6 +90,9 @@ export const IncomeProjectionTool: React.FC = () => {
     });
   };
 
+  /**
+   * Formats and copies a markdown-compatible summary of the active projection to clipboard.
+   */
   const handleCopySummary = async () => {
     const summaryText = `StormSale Affiliate Income Projection:
 - Monthly Referral Traffic: ${params.monthlyClicks.toLocaleString()} clicks
